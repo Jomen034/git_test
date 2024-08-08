@@ -20,37 +20,26 @@ jobs:
         run: echo "${{ steps.changed-files.outputs.all_changed_files }}"
         
       - name: Compare with static list
+        id: compare
         run: |
           # Define paths for the static and generated CSV files
           STATIC_LIST="cross_project/list_of_cross_model_v3.csv"
           
-          # Extract columns from both CSV files, ignoring headers
-          STATIC_MODELS=$(tail -n +2 $STATIC_LIST | cut -d',' -f1)
-          STATIC_REFERENCES=$(tail -n +2 $STATIC_LIST | cut -d',' -f2)
-          STATIC_ORIGIN_REPOS=$(tail -n +2 $STATIC_LIST | cut -d',' -f3)
-
-          CHANGED_FILES="${{ steps.changed-files.outputs.all_changed_files }}"
-          CHANGED_MODELS=$(echo "$CHANGED_FILES" | tr ' ' '\n' | awk -F/ '{print $NF}' | awk -F. '{print $1}' | sort | uniq)
-          
-          # Find matches between static models and changed models
-          MATCHES=$(echo "$CHANGED_MODELS" | grep -F -x -f <(echo "$STATIC_MODELS"))
-
-          if [ -n "$MATCHES" ]; then
-            echo "Found matches: $MATCHES"
-
-            PR_LINK="${{ github.event.pull_request.html_url }}"
-            MESSAGE="Hi <users/all>\nModels that are used in cross project have been changed in this PR: $PR_LINK.\nThe models are mentioned below, please check it:\n"
-
-            while IFS=',' read -r model reference origin_repo; do
-              if echo "$MATCHES" | grep -q "$model"; then
-                MESSAGE+="* $model that referred in $reference (origin repo is $origin_repo)\n"
+          MATCHES=""
+          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
+            for static_item in "${STATIC_LIST[@]}"; do
+              if [[ "$file" == *"$static_item"* ]]; then
+                MATCHES="${MATCHES}\n"* $static_item"
               fi
-            done < <(tail -n +2 $STATIC_LIST)
-
-            curl -X POST -H 'Content-Type: application/json' \
-              -d '{"text": "'"$MESSAGE"'"}' \
-              "${{ secrets.MODELS_CROSS_PROJECT }}"
-          else
-            echo "No matches found."
+            done
+          done
+          echo "MATCHES=$MATCHES" >> $GITHUB_ENV
+      
+      - name: Send Alert
+        run: |
+          if [[ -n "${{ env.MATCHES }}" ]]; then
+            curl -X POST -H "Content-Type: application/json" \
+            -d "{\"text\": \"Hi \u003cusers/all\u003e\nModels that are used in cross project have been changed in this PR: https://github.com/Jomen034/git_test/pull/26.\nThe models are mentioned below, please check it:${{ env.MATCHES }}\"}" \
+            "${{ secrets.MODELS_CROSS_PROJECT }}"
           fi
 
